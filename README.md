@@ -1,1 +1,1 @@
-In this project, we will continue using the NOAA storm data set, which you have already worked with in Projects 2 and 3, and the sea ice data set, which you have seen in Project 3, as well as in lectures. We will preprocess the data and attempt to build linear regression models for aspects in the data.
+In this project, we will continue using the NOAA storm data set and the sea ice data set. We will preprocess the data and attempt to build linear regression models for aspects in the data.
