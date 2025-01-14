@@ -1,0 +1,498 @@
+---
+title: "Project 3 -- Part 1"
+author: "PUT DOWN YOUR GROUP NUMBER as: Group #..."
+date: "13/11/2023"
+output: 
+  html_document: default
+  html_notebook: default
+  pdf_document: default
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r active="", eval=FALSE}
+# BEGIN ASSIGNMENT 
+```
+
+```{r setup, include=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tibble)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(readr)
+#library(repurrrsive)
+library(scales)
+#library(arrow)
+library(ggthemes)
+library(ggridges)
+```
+
+# Project 3. Exploring climate related data sets - Part 1
+
+**NOTE**: If you have used AI(s) in producing some of your work, please list the respective AI(s) as a collaborator below. Please also describe the contribution from the input of the AI(s) in the textbox, as well as provide details on how you have used the AI(s) in the process.
+
+```         
+   If you have used AI(s), input information in this box.
+```
+
+## Overview
+
+This project has **TWO** parts, and this file is the **Part 1**.
+
+-   **Part 1**: This file, should be submitted to Gradescope. First in `Project 3 -- testing`. When you are satisfied the result, submit your final code to `Project 3 -- Final submission`. This file will be autograded as previous projects, so you must make sure the autograder actually works on your code. You do not have to wait till this file is perfect before you work on Part 2.
+-   **Part 2**: A different file, should be submitted to MyLS Dropbox.
+
+In this part, we will import the NOAA storm data set, part of which you have already worked with in Project 2. Here, we will use functions to apply the same loading and cleaning methods to other parts of the data set. Afterwards, we will perform some exploratory analysis on the resulting data frame.
+
+## NOAA data for both Atlantic and Pacific basin
+
+### Use functions to load, clean and combine
+
+```{r error=TRUE}
+# Nothing to change here
+cyclone_data_address <- "https://www.nhc.noaa.gov/data/hurdat/"
+AT_cyclone <- "hurdat2-1851-2022-050423.txt"
+NP_cyclone <- "hurdat2-nepac-1949-2022-050423.txt"
+cyclone_files <- c(AT_cyclone, NP_cyclone)
+```
+
+In Project 2, the NOAA data for storms in Atlantic basin was loaded directly and some cleaning / tidying was done. In the code block below, write the loading and initial cleaning that has been done in Project 2 into a single function `read_cyclone`. It takes the file name to be loaded as the single parameter, and output the tidied up dataframe, in the format provided by Project 2.
+
+```{r error=TRUE, warning=FALSE, tags=c()}
+new_columns <- c("status", "latitude", "longitude", "max_wind", "min_pressure", "NE_extend_34", "SE_extend_34", "SW_extend_34", "NW_extend_34", "NE_extend_50", "SE_extend_50", "SW_extend_50", "NW_extend_50", "NE_extend_64", "SE_extend_64", "SW_extend_64", "NW_extend_64", "r_max_wind"
+)
+
+# Reads a hurricane data file and produce a tidy dataframe, as accomplished in Project 2
+# parameters:
+#   single_file: the filename of the file containing hurricane data to be loaded and cleaned
+# return:
+#   a tidy dataframe with proper column names containing the data read from the file
+read_cyclone <- function(single_file = AT_cyclone) {
+  output <- str_c(cyclone_data_address, single_file, sep = "") |>
+  # YOUR CODE HERE
+    read_csv(col_names = c("1","2","3","4")) |>
+    separate_wider_delim("4", delim = ",", names = new_columns) |>
+    mutate(across(everything(), str_trim)) |>
+    mutate_all(~ifelse(. == "-999", NA, .)) |>
+    
+    mutate(
+     BasinNumberYear = ifelse(is.na(status), `1`, NA),
+     Name = ifelse(is.na(status), `2`, NA),
+     Entries = ifelse(is.na(status), `3`, NA)
+   ) |>
+   relocate(BasinNumberYear, Name, Entries) |>
+   fill(BasinNumberYear, Name, Entries) |>
+   filter(!is.na(status)) |>
+    
+    select(-Entries) |>
+    
+    separate_wider_position(
+    cols = BasinNumberYear,
+    widths = c(
+      Basin = 2,
+      Number = 2,
+      NameYear = 4
+      )
+    ) |>
+    separate_wider_position(
+    cols = `1`,
+    widths = c(
+      ObservYear = 4,
+      Month = 2,
+      Day = 2
+      )) |>
+    
+    separate_wider_position(
+      cols = `2`,
+      widths = c(
+      Hour = 2,
+      Minute = 2
+      )) |>
+    rename(Identifier = `3`) |>
+    mutate(
+     across(c(NameYear, ObservYear, Month, Day, Hour, Minute, Number), as.integer),
+     across(max_wind:r_max_wind, as.double)
+   ) |>
+    mutate(max_wind = na_if(max_wind, -99))
+  
+  output
+}
+```
+
+```{r error=TRUE}
+. = ottr::check("tests/Loading1.R")
+```
+
+We can then use `purrr::map` to load and clean up data for both the Atlantic and Pacific basins.
+
+```{r error=TRUE, tags=c()}
+(cyclones_raw <- cyclone_files |>
+  
+   map(read_cyclone)
+ )
+```
+```{r error=TRUE}
+. = ottr::check("tests/Loading2.R")
+```
+
+In the resulting list `cyclones_data`, the first entry contains the data in the Atlantic basin, while the second entry contains the data in the Pacific basin. Now the `latitude` and `longitude` data are still only string types. We will convert them to numeric type, following the convention that
+
+-   `N`orthern latitude is positive, while `S`outhern latitude is negative
+-   `E`astern longitude is positive, while `W`estern longitude is negative
+
+First try it out on one of the dataframes, say the Atlantic one. The result from the following block has two new columns `num_lat` and `num_long`, which are simply rewriting the values in `latitude` and `longitude` in the desired string format, without actually converting to numeric types yet.
+
+```{r error=TRUE, tags=c()}
+(convert_attempt1 <- cyclones_raw[[1]] |>
+
+   mutate(
+     num_lat = if_else(str_sub(latitude,-1,-1) == "N", str_sub(latitude,1,-2), str_c("-", str_sub(latitude,1,-2))),
+     num_long = if_else(str_sub(longitude,-1,-1) == "E", str_sub(longitude,1,-2), str_c("-", str_sub(longitude,1,-2)))
+   ) |>
+   relocate(num_lat, num_long)
+)
+```
+
+```{r error=TRUE}
+. = ottr::check("tests/Loading3.R")
+```
+
+Everything seems to work out for this step. Next, we convert the columns `num_lat` and `num_long` into numeric types.
+
+```{r error=TRUE}
+
+convert_attempt1 |>
+  mutate(across(c(num_lat, num_long), as.numeric))
+```
+
+It seems to be working, but there is **one error**. We look into some details of the error, by using the `.names` parameter for `across` function and look at the wrong row, which has `NA` for either `test.num_long` or `test.num_lat`.
+
+```{r error=TRUE, tags=c()}
+(convert_error1 <- convert_attempt1 |>
+
+  select(num_lat, num_long, Basin:min_pressure) |>
+  relocate(latitude, longitude) |>
+  mutate(across(c(num_lat, num_long), as.numeric, .names = "test.{.col}")) |>
+  filter(is.na(test.num_lat) | is.na(test.num_long)) |>
+  select(-c(test.num_lat, test.num_long))
+)
+```
+
+```{r error=TRUE}
+. = ottr::check("tests/Loading4.R")
+```
+
+The issue is with the `--` that comes from `-0.0W` in the original `longitude` value in the row. Thus, we can avoid this by catching the `--` and removing it from the string. Since we will be also using the same code to deal with the data for the Pacific basin, we can write the corrected code into a function `convert_latlong`, which takes a dataframe as parameter, and output one with converted latitude and longitude.
+
+```{r error=TRUE, tags=c()}
+# The function takes a dataframe as parameter, and convert the string columns `latitude` and `longitude` in it
+#  to numeric types, so that
+#   `N`orthern latitude is positive, while `S`outhern latitude is negative
+#   `E`astern longitude is positive, while `W`estern longitude is negative
+# parameters:
+#   df: a dataframe that has two string columns `latitude` and `longitude`, with values of the format
+#       `23.5N` (for latitude) or `30.9W` (for longitude)
+# return:
+#   a new dataframe that contains two new columns `num_lat` and `num_long`, which are both now of numeric types
+convert_latlong <- function(df) {
+  output <- df |>
+  # YOUR CODE HERE
+    mutate(
+     num_lat = if_else(str_sub(latitude,-1,-1) == "N", str_sub(latitude,1,-2), str_c("-", str_sub(latitude,1,-2))),
+     num_long = if_else(str_sub(longitude,-1,-1) == "E", str_sub(longitude,1,-2), str_c("-", str_sub(longitude,1,-2)))
+     ) |>
+    mutate(num_long = if_else(num_long == "--0.0", "-0.0", num_long)) |>
+    mutate(across(c(num_lat, num_long), as.numeric))
+    
+  output
+}
+```
+
+```{r error=TRUE}
+. = ottr::check("tests/Loading5.R")
+```
+
+We can check if it now works with the Atlantic basin data.
+
+```{r error=TRUE}
+
+cyclones_raw[[1]] |>
+  convert_latlong()
+```
+
+It now works without error. We try looping through both dataframes for Atlantic and Pacific basin, and bind them into a single big dataframe.
+
+```{r error=TRUE, tags=c()}
+(cyclones_data <- cyclones_raw |>
+  
+   map(convert_latlong) |>
+   list_rbind()
+)
+```
+
+```{r error=TRUE}
+. = ottr::check("tests/Loading6.R")
+```
+
+### Further transformation of the data
+
+We make a datetime object out of the `ObservYear`, `Month`, `Day`, `Hour`, `Minute`. Then create a categorical variable `category` based on the `max_wind` observed, according to the *Saffir--Simpson hurricane wind scale (SSHWS)*, as on [Wikipedia](https://en.wikipedia.org/wiki/Saffir%E2%80%93Simpson_scale).
+
+```{r error=TRUE, tags=c()}
+cat_levels <- c("TD", "TS", "1", "2", "3", "4", "5")
+
+(cyclones <- cyclones_data |>
+
+    mutate(
+      observ_time = make_datetime(ObservYear, Month, Day, Hour, Minute),
+      category = ordered(
+        case_when(
+          max_wind <= 33 ~ "TD",
+          max_wind <= 63 ~ "TS",
+          max_wind <= 82 ~ "1",
+          max_wind <= 95 ~ "2",
+          max_wind <= 112 ~ "3",
+          max_wind <= 136 ~ "4",
+          max_wind > 137 ~ "5"
+        ), 
+        levels = cat_levels
+      )
+    )
+)
+```
+
+```{r error=TRUE}
+. = ottr::check("tests/Transform1.R")
+```
+
+We can save the data for use in **Part 2** of the project.
+
+```{r error=TRUE}
+# Nothing to change here
+cyclone_parquet_file <- "Cyclone-1850-2023.parquet"
+cyclones |> write_parquet(cyclone_parquet_file)
+```
+
+We can now do some simple things, such as checking how many basins are there
+
+```{r error=TRUE, tags=c()}
+(basins <- cyclones |>
+
+   summarize(
+     .by = Basin,
+     count = n(),
+     year_start = min(ObservYear, na.rm = TRUE),
+     year_end = max(ObservYear, na.rm = TRUE)
+   )
+)
+```
+
+```{r error=TRUE}
+. = ottr::check("tests/Transform2.R")
+```
+
+and how many different status are there in the data -- and when these status symbols are in use, etc.
+
+```{r error=TRUE, tags=c()}
+(status <- cyclones |>
+
+   summarize(
+     .by = c(category, status),
+     count = n(),
+     first_year = min(ObservYear, na.rm = TRUE),
+     last_year = max(ObservYear, na.rm = TRUE)
+   )
+)
+```
+
+```{r error=TRUE}
+. = ottr::check("tests/Transform3.R")
+```
+
+We immediately see somethings are off, since there are storms with hurricane strength wind, but not labeled with `HU` status. We will not go and make updates and corrections here, but you may want to look into if changing it is necessary when you work on Part 2.
+
+### Rapid intensification
+
+Even without updating the data, we can already ask interesting questions. For instance, from [Wikipedia](https://en.wikipedia.org/wiki/Rapid_intensification)
+
+```         
+ rapid intensification as an increase in the maximum sustained winds of a tropical cyclone of at least 30 knots (35 mph; 55 km/h) in a 24-hour period.
+```
+
+We can locate the storms that had periods of rapid intensification, by computing the differences of wind speed for each storm, in `6`, `12`, `18` and `24` hour time separations. If any one of them is at least `30` knots, then there wass rapid intensification.
+
+```{r error=TRUE, tags=c()}
+rapid <- 30
+
+(is_rapid_intensifying <- cyclones |>
+group_by(Basin, NameYear, Number) %>%
+  mutate(
+    six_hour_incr = max_wind - lag(max_wind, 1),
+    twelve_hour_incr = max_wind - lag(max_wind, 2),
+    eighteen_hour_incr = max_wind - lag(max_wind, 3),
+    one_day_incr = max_wind - lag(max_wind, 4),
+    forward_six_hour_incr = lead(max_wind, 1) - max_wind,
+    forward_twelve_hour_incr = lead(max_wind, 2) - max_wind,
+    forward_eighteen_hour_incr = lead(max_wind, 3) - max_wind,
+    forward_one_day_incr = lead(max_wind, 4) - max_wind
+  ) %>%
+  filter(
+    six_hour_incr >= rapid |
+    twelve_hour_incr >= rapid |
+    eighteen_hour_incr >= rapid |
+    one_day_incr >= rapid |
+    forward_six_hour_incr >= rapid |
+    forward_twelve_hour_incr >= rapid |
+    forward_eighteen_hour_incr >= rapid |
+    forward_one_day_incr >= rapid
+  ) %>%
+  select(six_hour_incr, twelve_hour_incr, eighteen_hour_incr, one_day_incr, forward_six_hour_incr, forward_twelve_hour_incr, forward_eighteen_hour_incr, forward_one_day_incr, everything()) %>%
+ungroup()
+)
+
+
+```
+
+```{r error=TRUE}
+. = ottr::check("tests/Intensify1.R")
+```
+
+We can get all the information on the cyclones that were rapidly intensifying during their lifetime, using the dataframe `rapid_intensifying_cyclones`.
+
+```{r error=TRUE, tags=c()}
+(rapid_intensifying_cyclones <- cyclones |>
+   semi_join(is_rapid_intensifying, by = c("Basin", "NameYear", "Number"))%>%
+  select(max_wind, category, everything())
+)
+
+
+```
+
+```{r error=TRUE}
+. = ottr::check("tests/Intensify2.R")
+```
+
+Now we can using a simple bar plot to observe the number of rapidly intensifying storms for any given year, and note the maximal category.
+
+```{r error=TRUE, tags=c()}
+(rapid_intensifying_plot <- rapid_intensifying_cyclones %>%
+  summarise(max_cat = max(category), .by = c(Basin, NameYear, Number)) %>%
+  ggplot(aes(x = NameYear, fill = max_cat)) +
+  geom_bar(show.legend = TRUE) +
+  theme_minimal() +
+  coord_flip() +
+  facet_wrap(~Basin) +
+  labs(
+    title = "Number of storms having rapidly intensifying episodes increases in all basins",
+    subtitle = "Even weaker storms may go through rapid intensification",
+    y = "Number of storms in a year with rapid intensification episodes",
+    x = "Year",
+    caption = "Data from NOAA"
+  ) +
+  guides(fill = guide_legend(title = "Maximal category", ncol = 1))
+)
+
+```
+
+```{r error=TRUE}
+. = ottr::check("tests/Intensify3.R")
+```
+
+### Hurricane seasons
+
+There is a commonly used term "hurricane season", which generally indicates the time of the year when hurricanes are *likely* to occur. Here, we will use it to refer to the period of each recorded year during which storms ending up with *hurricane strength* (i.e., not staying all the time in `TD` or `TS` categories) did *actually* occur. First write a function according to the comments in the code block below. **NOTE** that the parameters are vectors.
+
+```{r error=TRUE, tags=c()}
+# extract the year, month and day information from the time, with respect to the reference year
+# parameters:
+#   ref_years: a vector of reference years to compare the time with (they are of the same length)
+#   times: a vector of times that contains year, month and date information, as a lubridate object
+# return:
+#   a lubridate object, obtained by replacing the year in `time` by (time_year - year), and the same month and day
+ymd_extract <- function(times) {
+  output <- tibble(
+    year = year(times),
+    month = month(times),
+    day = day(times)
+  )
+  
+  return(output)
+}
+```
+```{r error=TRUE}
+. = ottr::check("tests/Season1.R")
+```
+
+Use the function `ymd_extract` above, we can obtain information on the hurricane season in each basin.
+
+```{r error=TRUE, tags=c()}
+(seasons <- cyclones |>
+  group_by(Basin, NameYear, Number) |>
+  summarise(
+    start_date = min(ymd_extract(observ_time[category %in% c("1", "2", "3", "4", "5")])),
+    end_date = max(ymd_extract(observ_time[category %in% c("1", "2", "3", "4", "5")]))
+  ) |>
+  ungroup()
+)
+```
+
+```{r error=TRUE}
+. = ottr::check("tests/Season2.R")
+```
+
+We can use a plot to see the storm seasons for each basin directly:
+
+```{r error=TRUE, tags=c()}
+(seasons_segment_plot <- seasons |>
+  mutate(
+    start_year = year(start_date),
+    end_year = year(end_date)
+  ) |>
+  ggplot(aes(x = start_date, xend = end_date, y = factor(Basin), yend = factor(Basin))) +
+  geom_segment(size = 5, color = "blue") +
+  theme_minimal() +
+  labs(
+    title = "Hurricane Seasons in Different Basins",
+    subtitle = "Segment representing the period of hurricane strength storms",
+    y = "Basin",
+    x = "Year",
+    caption = "Data from NOAA"
+  )
+)
+```
+
+```{r error=TRUE}
+. = ottr::check("tests/Season3.R")
+```
+
+Or check the length of the hurricane season using a line graph:
+
+```{r error=TRUE, tags=c()}
+(seasons_length_plot <- seasons |>
+  mutate(season_length = as.numeric(difftime(end_date, start_date, units = "days"))) |>
+  ggplot(aes(x = start_date, y = season_length, color = Basin)) +
+  geom_line() +
+  theme_minimal() +
+  labs(
+    title = "Hurricane Season Length in Different Basins",
+    subtitle = "Line graph representing the length of hurricane seasons",
+    y = "Season Length (days)",
+    x = "Year",
+    color = "Basin",
+    caption = "Data from NOAA"
+  )
+)
+```
+
+```{r error=TRUE}
+. = ottr::check("tests/Season4.R")
+```
+
+This finishes the **Part 1** of the Third Project. You should also complete **Part 2** for this project.
+
+```{r active="", eval=FALSE}
+# END ASSIGNMENT 
+```
