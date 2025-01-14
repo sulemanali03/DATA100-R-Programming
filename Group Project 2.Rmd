@@ -1,0 +1,808 @@
+---
+title: "Project 2"
+author: "Group 8"
+date: "23/10/2023"
+output: 
+  html_document: default
+  html_notebook: default
+  pdf_document: default
+  slidy_presentation: default
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r active="", eval=FALSE}
+# BEGIN ASSIGNMENT 
+```
+
+```{r setup, include=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tibble)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(stringr)
+library(readr)
+#library(repurrrsive)
+library(scales)
+library(openxlsx)
+library(jsonlite)
+```
+
+# Project 2. Importing and tidying data
+
+## Team members
+
+| Student ID | First Name | Last Name | @mylaurier.ca Email |
+|------------|------------|-----------|---------------------|
+|169074844   |  Prakriti  | Khanna    |khan4844@mylaurier.ca|
+|169070981   |  Muhammad  | Ansari    |ansa0981@mylaurier.ca|                     |
+|169060597   |  Yash      | Soni      |soni0597@mylaurier.ca|
+|169044667   |  Suleman   |           |alix4667@mylaurier.ca|
+|            |            |           |                     |
+|            |            |           |                     |
+
+**NOTE**: 
+
+1. Each student should submit a peer evaluation form assigning grades (from 0 to 10) to each member of the group to gradescope, following the project instruction.
+
+2. If you have used AI(s) in producing some of your work, please list the respective AI(s) as a collaborator in the **Team members** table above.
+In this case, please also describe the contribution from the input of the AI(s) in the textbox below, as well as provide details on how you have used the AI(s) in the process.
+
+```         
+If needed, provide further details on contributions from the AI below:
+```
+
+## Overview
+
+In this project, we will import four data sets from various file formats, and perform some tidying up of the imported data.
+We will need to understand the structures of the data as we try to tidy them.
+
+## Import NOAA storm data (`.csv`)
+
+The [NOAA](https://www.nhc.noaa.gov/data/hurdat) hurricane data up to year $2022$ is in `.csv` format.
+The updated data description is at [NOAA](https://www.nhc.noaa.gov/data/hurdat/hurdat2-format-nencpac-1949-2021.pdf) and a more up-to-date webpage is [here](https://www.aoml.noaa.gov/hrd/data_sub/newHURDAT.html).
+
+First we load the data as `.csv` and see what we get.
+
+```{r error=TRUE, warning=FALSE, tags=c()}
+atl_cyclone_data_address <- "https://www.nhc.noaa.gov/data/hurdat/hurdat2-1851-2022-050423.txt"
+(atl_cyclone_2022_raw <- atl_cyclone_data_address |> 
+    read_csv(col_names = c("1", "2", "3", "4"))
+)
+```
+
+```{r}
+. = ottr::check("tests/NOAAStorm0.R")
+```
+
+The format at least looks correct.
+The column `4` definitely needs to be split into multiple columns.
+Based on the documentation, the fields are separated by `,`, so we can use this to make the split.
+The new column names, based on the documentation, are given in the `new_columns` variable.
+It is also good practice to trim all the string values after separation.
+
+```{r error=TRUE, tags=c()}
+new_columns <- c("status", "latitude", "longitude", "max_wind", "min_pressure", "NE_extend_34", "SE_extend_34", "SW_extend_34", "NW_extend_34", "NE_extend_50", "SE_extend_50", "SW_extend_50", "NW_extend_50", "NE_extend_64", "SE_extend_64", "SW_extend_64", "NW_extend_64", "r_max_wind"
+)
+(atl_cyclone_2022_update1 <- atl_cyclone_2022_raw |>
+  separate(4, new_columns, sep = ",") |>
+  mutate(
+    across(everything(), str_trim)
+  )
+)
+```
+
+```{r}
+. = ottr::check("tests/NOAAStorm1.R")
+```
+
+We notice that many values are `-999`, which cannot be right.
+Indeed, they denote missing values.
+We should update the data frame to reflect this.
+
+```{r error=TRUE, tags=c()}
+(atl_cyclone_2022_update2 <- atl_cyclone_2022_update1 |>
+  mutate(across(everything(), ~ na_if(., '-999')))
+)
+```
+
+```{r}
+. = ottr::check("tests/NOAAStorm2.R")
+```
+
+We look at this preliminary result.
+
+```{r error=TRUE}
+# Nothing to change here
+tail(atl_cyclone_2022_update2, n=20)
+```
+
+We see that the identifying information for each cyclone is in a separate row, and the actual observation follows in the rows below.
+This is not in tidy form and we should tidy it up.
+We notice that the rows that contain only the identifying information miss values in the columns starting from `status`.
+The process is to create three new columns with proper names to capture the identifying information of the storms.
+Then propagate the values down so that each row corresponding to the same storm gets the same identifying information.
+Lastly, get rid of the original rows that *DO NOT* contain any observations.
+
+```{r error=TRUE, tags=c()}
+(atl_cyclone_2022_update3 <- atl_cyclone_2022_update2 |>
+   mutate(
+     BasinNumberYear = ifelse(if_all(status:r_max_wind, is.na), `1`, NA),
+          Name = ifelse(if_all(status:r_max_wind, is.na), `2`, NA),
+          Entries = ifelse(if_all(status:r_max_wind, is.na), `3`, NA)) |>
+   fill(c(BasinNumberYear, Name, Entries)) |>
+   relocate(BasinNumberYear, Name, Entries, everything()) |>
+   filter(!(if_all(status:r_max_wind, is.na)))
+)
+```
+
+```{r}
+. = ottr::check("tests/NOAAStorm3.R")
+```
+
+We check our work so far, to make sure nothing is messed up by previous operations.
+The value of `Entries` should coincide with the number of rows recording information on the same cyclone.
+
+```{r error=TRUE}
+# Nothing to change here
+atl_cyclone_2022_update3 |>
+  group_by(BasinNumberYear, Name, Entries) |>
+  mutate(
+    count_wrong = (Entries != n())
+    ) |>
+  filter(count_wrong)
+```
+
+Next, create the detailed date and time information for the observations, by splitting the columns `BasinNumberYear` and `1`.
+Some cyclone gets named in one year (in column `BasinNumberYear`), while last long enough to the year after (in column `1`).
+Thus we should distinguish the two different types of years.
+The first one (from `BasinNumberYear`) will be `NameYear`, while the second one (from `1`) will be `ObservYear`.
+
+```{r error=TRUE, tags=c()}
+(atl_cyclone_2022_update4 <- atl_cyclone_2022_update3 |>
+  select(-Entries) |> # Due to the sanity check, `Entries` column is redundant
+  separate_wider_position(BasinNumberYear, widths = c(Basin = 2, Number = 2, NameYear = 4)) |>
+  separate_wider_position(`1`, widths = c(ObservYear = 4, Month = 2, Day = 2))
+)
+```
+
+```{r}
+. = ottr::check("tests/NOAAStorm4.R")
+```
+
+We can see that indeed there are cyclones that went across years.
+
+```{r error=TRUE}
+# Nothing to change here
+atl_cyclone_2022_update4 |>
+  filter(NameYear != `ObservYear`)
+```
+
+Now we can finish reassign the column names and types according to the data description.
+First, we should separate column `2` into `Hour` and `Minute`, and rename column `3` to the more meaningful `Identifier`, according to the documentation.
+
+```{r error=TRUE, tags=c()}
+(atl_cyclone_2022_update5 <- atl_cyclone_2022_update4 |>
+   separate_wider_position(`2`, widths = c(Hour = 2, Minute = 2)) |>
+   rename("Identifier" = `3`)
+)
+```
+
+```{r}
+. = ottr::check("tests/NOAAStorm5.R")
+```
+
+Then we parse the obvious numeric columns to the correct types.
+The columns `NameYear`, `ObservYear`, `Month`, `Day`, `Hour`, `Minute`, and `Number` should be integers, while the columns starting with `max_wind` should be doubles.
+
+```{r error=TRUE, tags=c()}
+(atl_cyclone_2022_tidy <- atl_cyclone_2022_update5 |>
+   mutate(
+     NameYear = parse_integer(NameYear),
+     ObservYear = parse_integer(ObservYear),
+     Month = parse_integer(Month),
+     Day = parse_integer(Day),
+     Hour = parse_integer(Hour),
+     Minute = parse_integer(Minute),
+     Number = parse_integer(Number),
+     max_wind = parse_double(max_wind),
+     across(all_of(c("min_pressure", "min_pressure", "NE_extend_34","NE_extend_34", "SE_extend_34", "SE_extend_34", "SW_extend_34", "SW_extend_34", "NW_extend_34", "NW_extend_34", "NE_extend_50", "NE_extend_50", "SE_extend_50", "SW_extend_50", "SW_extend_50", "NW_extend_50", "NE_extend_64", "SE_extend_64", "SW_extend_64", "NW_extend_64", "r_max_wind")), parse_double)
+))
+```
+
+```{r}
+. = ottr::check("tests/NOAAStorm6.R")
+```
+
+Have now a tidy data set.
+Let's look at the `max_wind`, by sorting it from smallest to largest.
+
+```{r error=TRUE}
+# Nothing to change here
+atl_cyclone_2022_tidy |>
+  arrange(max_wind) |>
+  select(max_wind, everything())
+```
+
+It turns out that there are rows with `-99` as values for `max_wind`!
+It cannot be reasonable and must represent missing values.
+We should update it once more to convert all the `-99` values to `NA`.
+
+```{r error=TRUE, tags=c()}
+(atl_cyclone_2022 <- atl_cyclone_2022_tidy |>
+   mutate(max_wind=na_if(max_wind, -99)) |>
+   select(max_wind, everything())
+)
+```
+
+```{r}
+. = ottr::check("tests/NOAAStorm7.R")
+```
+
+We verify that indeed `-99` becomes `NA`:
+
+```{r error=TRUE}
+# Nothing to change here
+atl_cyclone_2022 |>
+  filter(Basin == "AL", Number == 3, NameYear == 1971)
+```
+
+The data is in much better shape and we should save all the work as a `parquet` file, so that we do not have to go through the whole process again.
+
+```{r error=TRUE, tags=c()}
+library(arrow)
+save_name <- "hurdat2-1851-2022.parquet"
+
+write_parquet(atl_cyclone_2022,save_name)
+```
+
+```{r}
+. = ottr::check("tests/NOAAStorm8.R")
+```
+
+Then we read it back just to make sure:
+
+```{r error=TRUE}
+# Nothing to change here
+read_parquet(save_name)
+```
+
+## Import Facebook climate opinion data (`.xlsx`)
+
+The following works with the public data provided by Meta (formerly Facebook).
+Citation:
+
+```         
+Data for Good at Meta and the Yale Program on Climate Change Communication. 2022. Climate Change Opinion Survey. Accessed DAY MONTH YEAR.
+```
+
+First, check out the names of the sheets in the file
+
+```{r error=TRUE, tags=c()}
+
+climate_opinion_address <- "https://data.humdata.org/dataset/dc9f2ca4-8b62-4747-89b1-db426ce617a0/resource/6041db5f-8190-47ff-a10b-9841325de841/download/climate_change_opinion_survey_2022_aggregated.xlsx"
+
+temp_file <- tempfile(fileext = ".xlsx")
+download.file(climate_opinion_address, destfile = temp_file, mode = "wb")
+
+climate_sheet_names <- getSheetNames(temp_file)
+
+climate_sheet_names
+
+unlink(temp_file)
+```
+
+```{r}
+. = ottr::check("tests/ClimateOpinion-1.R")
+```
+
+The `Readme` and `Codebook` sheets describe the data.
+Take a look at them first.
+In particular
+
+-   The `Readme` sheet contains overall information about the origin of the data and how to cite it
+-   The `Codebook` sheet contains information about the questions and answers associated to variables in more details.
+
+Both are useful information to have and the following blocks load and display them.
+
+```{r error=TRUE, tags=c()}
+
+# load the Readme sheet
+sheet_name <- "Readme"
+
+(climate_readme <- read.xlsx(climate_opinion_address, sheet = sheet_name, startRow = 1, colNames = TRUE)
+)
+
+View(climate_readme)
+```
+
+```{r error=TRUE, tags=c()}
+# load the Codebook sheet
+sheet_name <- "Codebook"
+
+(climate_codebook <- climate_opinion_address %>%
+  loadWorkbook() %>%
+  read.xlsx(sheet = sheet_name, startRow = 1, colNames = TRUE)
+
+)
+
+View(climate_codebook)
+```
+
+```{r}
+. = ottr::check("tests/ClimateOpinion0.R")
+```
+
+In this part, we load the first two data sheets, "climate_awareness", and "climate_happening", into their respective dataframes, tidy then combine them into one single dataframe.
+Let's start with the "climate_awareness" sheet.
+
+```{r error=TRUE, tags=c()}
+aware_sheet_name <- "climate_awareness"
+
+(climate_awareness_raw <- read.xlsx(climate_opinion_address, sheet = aware_sheet_name)
+   
+)
+```
+
+```{r}
+. = ottr::check("tests/ClimateOpinion1.R")
+```
+
+It does not seem to be in tidy form.
+We need to tidy it up.
+Moreover, it looks like the whole table should be *transposed*, meaning, columns should have been rows and rows should have been columns.
+We will need to do this in a few steps.
+
+```{r error=TRUE, tags=c()}
+(climate_awareness_update1 <- climate_awareness_raw %>%
+  pivot_longer(
+    cols = -aware_sheet_name,
+    names_to = "country",
+    values_to = "score"
+  )
+
+)
+```
+
+```{r}
+. = ottr::check("tests/ClimateOpinion2.R")
+```
+
+The dataframe above is in fact tidy.
+On the other hand, there are more than one sheets and we are planning to put a few sheets into a single dataframe.
+It is better that we have one row for each country for the sheets to be joined together, even though it may mean a less tidy dataframe.
+
+Make the values in the `climate_awareness` column more like variable names, in preparation for the final pivoting:
+
+```         
+       "I have never heard of it" ---> "aware_no"
+       "I know a little about it" ---> "aware_alittle"
+       "I know a moderate amount about it" ---> "aware_moderate"
+       "I know a lot about it" ---> "aware_alot"
+       "Refused" ---> "aware_refuse"
+       "(Unweighted Base)" ---> "aware_base"
+```
+
+and rename the column `climate_awareness` to `answer`.
+It is not absolutely necessary to rename the column, while it facilitates iteration if we are to work on all the sheets.
+
+```{r error=TRUE, tags=c()}
+climate_awareness_update2 <- climate_awareness_update1 %>%
+  mutate(answer = recode(climate_awareness,
+                           "I have never heard of it" = "aware_no",
+                           "I know a little about it" = "aware_alittle",
+                           "I know a moderate amount about it" = "aware_moderate",
+                           "I know a lot about it" = "aware_alot",
+                           "Refused" = "aware_refuse",
+                           "(Unweighted Base)" = "aware_base")) %>%
+  select(-climate_awareness) %>%
+  
+  relocate(answer, .before = 1)
+climate_awareness_update2
+```
+
+```{r}
+. = ottr::check("tests/ClimateOpinion3.R")
+```
+
+Now finish the transposition of the table.
+
+```{r error=TRUE, tags=c()}
+(climate_awareness <- climate_awareness_update2 %>%
+   pivot_wider(
+    names_from = answer,  
+    values_from = score  
+  )
+)
+```
+
+```{r}
+. = ottr::check("tests/ClimateOpinion4.R")
+```
+
+Next, we do the same procedure for "climate_happening" sheet, putting all the steps above into one block.
+The values in the column `climate_happening` is converted to following names of the columns in the final dataframe:
+
+```         
+       "Yes" ---> "happening_yes",
+       "No" ---> "happening_no",
+       "Don't know" ---> "happening_dontknow",
+       "Refused" ---> "happening_refuse",
+       "(Unweighted Base)" ---> "happening_base"
+```
+
+Again, change the column name `climate_happening` to `answer`, and finish the transposition of the table.
+
+```{r error=TRUE, tags=c()}
+happening_sheet_name <- "climate_happening"
+climate_happening_raw <- read.xlsx(climate_opinion_address, sheet = happening_sheet_name)
+(climate_happening_update1 <- climate_happening_raw %>%
+  pivot_longer(
+    cols = -happening_sheet_name,
+    names_to = "country",
+    values_to = "score"
+  )
+)
+
+climate_happening_update2 <- climate_happening_update1 %>%
+  mutate(answer = recode(climate_happening,
+                           "Yes" = "happening_yes",
+                           "No" = "happening_no",
+                           "Don't know" = "happening_dontknow",
+                           "Refused" = "happening_refuse",
+                           "(Unweighted Base)" = "happening_base")) %>%
+  select(-climate_happening) %>%
+  relocate(answer, .before = 1)
+
+(climate_happening <- climate_happening_update2 %>%
+   pivot_wider(
+    names_from = answer,  
+    values_from = score  
+  )
+)
+```
+
+```{r}
+. = ottr::check("tests/ClimateOpinion5.R")
+```
+
+Lastly, we join the two sheets together by the `country` names as follows.
+The result is a collection of scores from both sheets.
+Similar procedure can be used to load the rest of the sheets and put them together into the same dataframe for future analysis.
+
+```{r error=TRUE}
+# Nothing to change here
+(climate_opinion_sheets <- climate_awareness |>
+  full_join(
+    climate_happening,
+    by = join_by(country)
+  )
+)
+```
+
+## Import ColorBrewer color scale data (`.json`)
+
+We have discussed the `colorbrewer` color scales in Lecture 07.
+Here, we load all the color scales from `colorbrewer` into a dataframe.
+
+The file can be obtained online in `.json` format as provided below.
+
+```{r error=TRUE, tags=c()}
+colorbrewer_address <- "https://colorbrewer2.org/export/colorbrewer.json"
+
+colorbrewer_raw <- fromJSON(colorbrewer_address)
+
+```
+
+```{r}
+. = ottr::check("tests/ColorBrewer0.R")
+```
+
+Use `View()` function to see the structure of the loaded json file.
+
+```{r error=TRUE}
+# Nothing to change here
+View(colorbrewer_raw)
+```
+
+Or using `str()` function directly, as we have done in lectures.
+
+```{r error=TRUE}
+# Nothing to change here
+
+# get the first level
+str_1 <- colorbrewer_raw |>
+  str(max.level = 1)
+
+# get the next level of the first field in the first level
+colorbrewer_raw[[1]] |> 
+  str(max.level = 1)
+
+# get the next level of the first field in the second level
+colorbrewer_raw[[1]][[1]] |>
+  str(max.level = 1)
+```
+
+We notice that there is only a single `json` object in this file, which should be put into a list before turning it into a `tibble`.
+
+The structure of the data indicates that
+
+-   the first level lists all the palettes,
+-   the second level lists all the scales in each palette,
+-   the third (which is the last) level lists all the colors in each scale.
+
+```{r error=TRUE, tags=c()}
+colorbrewer_tibble <- tibble(
+  palette = names(colorbrewer_raw),
+  scales = map(colorbrewer_raw, ~ names(.x)),
+  colors = map(colorbrewer_raw, ~ map(.x, ~ unlist(.x)))
+)
+```
+
+```{r}
+. = ottr::check("tests/ColorBrewer1.R")
+```
+
+First we unwrap the first level, and rename the column corresponding to field names to `palette_name`.
+
+```{r error=TRUE, tags=c()}
+colorbrewer_update1 <- colorbrewer_tibble %>%
+  unnest(cols = c(palette, scales, colors)) %>%
+  rename(palette_name = palette)
+```
+
+```{r}
+. = ottr::check("tests/ColorBrewer2.R")
+```
+
+The we unwrap the second level.
+At this level, from the structure we see previously, the fields `type` seem to be the odd ones out.
+We should get rid of those `type` fields before moving on to further tidying.
+Lastly, we rename again the column corresponding to the field names to `palette_number`.
+
+```{r error=TRUE, tags=c()}
+colorbrewer_update2 <- colorbrewer_update1 %>%
+  unnest(cols = scales) %>%
+  filter(!grepl("^type", scales)) %>%  # Remove fields starting with "type"
+  rename(palette_number = scales)
+```
+
+```{r}
+. = ottr::check("tests/ColorBrewer3.R")
+```
+
+After unwrapping the third level, we add a new column `color_seq` to keep track of the different colors in the same scale.
+
+```{r error=TRUE, tags=c()}
+colorbrewer_update3 <- colorbrewer_update2 %>%
+  unnest(cols = colors) %>%
+  group_by(palette_name, palette_number) %>%
+  mutate(color_seq = row_number()) %>%
+  ungroup()
+```
+
+```{r}
+. = ottr::check("tests/ColorBrewer4.R")
+```
+
+The contents of the `palettes` column consists of colors described in their *R*ed, *G*reen and *B*lue components:
+
+-   `rgb(252,141,89)` means that the color has $252$ in the *R*ed component, $141$ in the *G*reen component and $89$ in the *B*lue component.
+
+We will separate the numbers into three columns, named `red`, `green` and `blue` respectively.
+The last step is to rearrange the columns so that the higher level is to the left of the lower level columns.
+
+```{r error=TRUE, tags=c()}
+colorbrewer_data <- colorbrewer_update3 %>%
+  separate(colors, into = c("a", "red", "green", "blue"), sep = "[(), ]+") %>%
+  relocate(palette_name, palette_number, color_seq, red, green, blue) %>%
+  select(-a)
+view(colorbrewer_data)
+```
+
+```{r}
+. = ottr::check("tests/ColorBrewer5.R")
+```
+
+## Import Xandr ad-targetting data (`.csv`)
+
+The data set here is from a spreadsheet found on the ad platform Xandr.
+More information on how it came about can be found in an article from [the Markup](https://themarkup.org/privacy/2023/06/08/from-heavy-purchasers-of-pregnancy-tests-to-the-depression-prone-we-found-650000-ways-advertisers-label-you).
+With the tools we have, we can try to verify some of the claims from the article.
+
+First get the data.
+Do not forget to have the column names cleaned.
+
+```{r error=TRUE, tags=c()}
+xandr_address <- "https://github.com/the-markup/xandr-audience-segments/raw/main/data_marketplace_public_segments_pricing_05212021.csv"
+(xandr_raw <- xandr_address <- "https://github.com/the-markup/xandr-audience-segments/raw/main/data_marketplace_public_segments_pricing_05212021.csv")
+
+# Read the CSV file and clean column names
+xandr_raw <- read_csv(xandr_address)
+
+# Convert column names to lowercase and replace spaces with underscores
+colnames(xandr_raw) <- tolower(gsub(" ", "_", colnames(xandr_raw)))
+
+# Glimpse the cleaned data
+glimpse(xandr_raw)
+```
+
+```{r}
+. = ottr::check("tests/XandrAd0.R")
+```
+
+Let's see who are the data providers and how prolific they are.
+
+```{r error=TRUE, tags=c()}
+(xandr_providers <- xandr_raw %>%
+  group_by(.by = `data_provider_name`) %>%
+  summarize(Count = n()) %>%
+  arrange(desc(Count)))
+
+xandr_providers
+```
+
+```{r}
+. = ottr::check("tests/XandrAd1.R")
+```
+
+A bar diagram may give us some overall idea.
+Due to the vastly different scales these providers contribute to the list, we can try to use logarithmic scale on `x` here.
+
+```{r error=TRUE, tags=c()}
+(providers_plot <- ggplot(xandr_providers, aes(x = reorder(.by, -Count), y = Count)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  labs(x = "Data Provider Name", y = "Count") +
+  ggtitle("Data Providers in Xandr") +
+  coord_trans(x = "log10"))
+```
+
+```{r}
+. = ottr::check("tests/XandrAd2.R")
+```
+
+The data seem to be quite haphazardly put together.
+We'll see that some `segment_name`s correspond to more than one `segment_id`s.
+
+```{r error=TRUE}
+# Nothing to change here
+xandr_raw |>
+  summarize(
+    .by = segment_name,
+    segment_ids = n_distinct(segment_id)
+  ) |>
+  filter(segment_ids > 1)
+```
+
+Among the list above, some rows have the same `segment_name`, as well as `data_provider_name`, and still have different `segment_id`s, as shown below.
+This must be some kind of error.
+
+```{r error=TRUE}
+# Nothing to change here
+xandr_raw |>
+  summarize(
+    .by = c(data_provider_name, segment_name),
+    segment_ids = n_distinct(segment_id)
+  ) |>
+  filter(segment_ids > 1)
+```
+
+We can eliminate the duplication in the data, by picking the smaller `segment_id` number that correspond to the same `data_provider_name` and `segment_name`.
+
+```{r error=TRUE, tags=c()}
+(xandr_update1 <- xandr_raw %>%
+  group_by(data_provider_name, segment_name) %>%
+  arrange(segment_id) %>%
+  slice(1) %>%
+  ungroup())
+
+xandr_update1
+```
+
+```{r}
+. = ottr::check("tests/XandrAd3.R")
+```
+
+We verify that indeed there is no longer spurious duplications.
+
+```{r error=TRUE}
+# Nothing to change here
+xandr_update1 |>
+  summarize(
+    .by = c(data_provider_name, segment_name),
+    segment_ids = n_distinct(segment_id)
+  ) |>
+  filter(segment_ids > 1)
+```
+
+Let's try the key words `Retail Visit` to see if any data provider has targeted a segment of population related to it.
+We need to make sure that the capitalization does not matter, i.e. the search result would also include `retail visit` and `RETAIL VISIT` in the `segment_name`, for instance.
+
+```{r error=TRUE, tags=c()}
+visit_keywords <- "Retail Visit"
+
+(retail_visit_target <- xandr_update1 %>%
+  filter(str_detect(str_to_lower(segment_name), str_to_lower(visit_keywords)))
+)
+
+retail_visit_target
+```
+
+```{r}
+. = ottr::check("tests/XandrAd4.R")
+```
+
+The segment names are too long, and contain too much information in one piece.
+They need to be separated into multiple columns.
+The ones in the resulting list above seem to be all broken into sections by `>`.
+Use separate by deliminator to split the column into `level_1`, `level_2` ... and `level_7`.
+If a row has less than `7` pieces in `segment_name`, fill the it with `NA` on the right; while if a row has more than `7` pieces in `segment_name`, drop the extra pieces.
+Again, trimming the resulting pieces is a good idea.
+
+```{r error=TRUE, tags=c()}
+(retail_visit_target_sep <- retail_visit_target |>
+  separate(segment_name, into = paste0("level_", 1:7), sep = ">", fill = "right")|>
+  mutate(across(where(is.character), str_trim)))
+
+retail_visit_target_sep
+```
+
+```{r}
+. = ottr::check("tests/XandrAd5.R")
+```
+
+There are not many rows in the above and we can simply go through them all.
+It seems they came mainly from two sources `Audiences by Oracle` and `LiveRamp` --- which are the top two contributors.
+Looking at `level_6`, it shows that there are quite a bit of details --- the data providers, hence the advertisers, seem to know if people go to some of the popular stores.
+Also some further separation might be useful, since there are values like `Recent Retail Visit by Shopper - DHL (BlueKai)` (in row $77$), which could be split by `-`.
+
+We can use a shorter keyword `Retail` to capture more data.
+
+```{r error=TRUE, tags=c()}
+keywords <- "Retail"
+
+(retail_target <- xandr_update1 %>%
+  filter(str_detect(str_to_lower(segment_name), str_to_lower(keywords))))
+
+retail_target
+```
+
+```{r}
+. = ottr::check("tests/XandrAd6.R")
+```
+
+Indeed, there are `31618` rows which one cannot go through directly.
+Nonetheless, looking at a few segment names shows the surprising information that advertisers can gather.
+For instance, those provided by `AdAdvisor by Neustar` even have time information, such as `Lst 3M` v.s.
+`Lst 4Wk`.
+
+```{r error=TRUE}
+# Nothing to change here
+retail_target |>
+  filter(data_provider_name == "AdAdvisor by Neustar")
+```
+
+Let's look at another keyword, this time is `Taylor Swift`, just to finish this project.
+
+```{r error=TRUE, tags=c()}
+keywords <- "Taylor Swift"
+
+(entertain_target <- xandr_update1 %>%
+  filter(str_detect(str_to_lower(segment_name), str_to_lower(keywords))))
+
+entertain_target
+```
+
+```{r}
+. = ottr::check("tests/XandrAd7.R")
+```
+
+The project stops here, but as you may have already realized, there are much more to dig through in theses data sets, especially the last one that we only barely scratched the surface of.
+The last data set is *extremely dirty*, in that it is almost randomly formed and it does not seem to be possible to write scripts to automate the cleaning.
+It'll take quite a bit of manual work to make the last dataset usable.
+
+```{r active="", eval=FALSE}
+# END ASSIGNMENT 
+```
